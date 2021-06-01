@@ -1,0 +1,150 @@
+import pyodbc
+import pandas as pd
+
+
+conn = pyodbc.connect('DSN=Clarity;Trusted_Connection=yes;')
+
+##Clarity Query v5.0
+sql = """
+SELECT
+   PE.PAT_ENC_CSN_ID AS "CSN_ID"
+  ,PE.PAT_ID
+  ,PAT.ADD_LINE_1 AS "ADDRESS_PAT"
+  ,PAT.CITY AS "CITY"
+  ,ST.NAME AS "STATE"
+  ,PAT.ZIP AS "ZIP_PAT"
+  ,DEP.DEPARTMENT_NAME AS "CENTER"
+  ,DEP.DEPARTMENT_ID AS "EPIC_ID"
+  ,DEP.GL_PREFIX AS "GL"
+  ,SX.NAME AS "SEX"
+  ,RC1.NAME AS "RACE"
+  ,LAN.NAME AS "LANGUAGE"
+  ,CASE WHEN ES.NAME= 'NULL' 
+                           THEN 'UNKNOWN' ELSE ES.NAME   
+                           END AS "EMPLY_STATUS"
+  ,MS.NAME AS "MARITAL_STATUS"
+  ,CASE WHEN MONTH(PE.CONTACT_DATE) * 100 + DAY(PE.CONTACT_DATE) >= MONTH(PAT.BIRTH_DATE) * 100 + DAY(PAT.BIRTH_DATE) 
+                           THEN DATEDIFF(YEAR, PAT.BIRTH_DATE, PE.CONTACT_DATE) 
+                           ELSE DATEDIFF(YEAR, PAT.BIRTH_DATE, PE.CONTACT_DATE) - 1 
+                           END AS "AGE_AT_ENCOUNTER"
+  ,CASE WHEN EPM.PAYOR_NAME is NULL 
+                           THEN 'SELF-PAY' 
+                           ELSE EPM.PAYOR_NAME 
+                           END AS "ENCOUNTER_PAYOR"
+  ,SA.APPT_MADE_DTTM AS "APPT_MADE_DATETIME"
+  ,PE.APPT_MADE_DATE AS "APPT_MADE_DATE"
+  ,PE.APPT_TIME AS "APPT_TIME"
+  ,DATENAME(DW,PE.APPT_TIME) AS "APPT_WEEK"
+  ,DATENAME(MM,PE.APPT_TIME) AS "APPT_MONTH"
+  ,DATEPART(DW,PE.APPT_TIME) AS "APPT_DAY"
+  ,DATEPART(HH,PE.APPT_TIME) AS "APPT_HOUR"
+  ,CASE WHEN DATEPART(HH,PE.APPT_TIME) BETWEEN '01' AND '11' 
+                           THEN 'AM' ELSE 'PM' 
+                           END AS "APPT_TIME_AMPM"
+  ,PE.CONTACT_DATE AS "ENCOUNTER_DATE"
+  ,CASE WHEN DATEDIFF("D",PE.APPT_MADE_DATE, PE.CONTACT_DATE)<0 
+                           THEN 0 ELSE DATEDIFF("D",PE.APPT_MADE_DATE, PE.CONTACT_DATE) 
+                           END AS "DAYS_TO_APPT"
+  ,PRC.PRC_NAME AS "VISIT_TYPE"
+  ,AST.NAME AS"APPT_STATUS_NAME"
+  ,SUM(NSHX.NSH) AS "NS_HX"
+  ,CASE WHEN AST.NAME='No Show' 
+                           THEN 1 ELSE 0 
+                           END AS "APPT_STATUS"
+
+FROM ZC_APPT_STATUS AST RIGHT OUTER JOIN PAT_ENC PE ON (AST.APPT_STATUS_C=PE.APPT_STATUS_C)
+   LEFT OUTER JOIN CLARITY_EPM EPM ON (PE.VISIT_EPM_ID=EPM.PAYOR_ID)
+   LEFT OUTER JOIN ZC_DISP_ENC_TYPE ON (PE.ENC_TYPE_C=ZC_DISP_ENC_TYPE.DISP_ENC_TYPE_C)
+   INNER JOIN PATIENT PAT ON (PE.PAT_ID=PAT.PAT_ID)
+   LEFT OUTER JOIN ZC_LANGUAGE LAN ON (LAN.LANGUAGE_C=PAT.LANGUAGE_C)
+   LEFT OUTER JOIN ZC_STATE ST ON (ST.STATE_C=PAT.STATE_C)
+   LEFT OUTER JOIN ZC_SEX SX ON (SX.RCPT_MEM_SEX_C=PAT.SEX_C)
+   LEFT OUTER JOIN PATIENT_RACE RC ON (PAT.PAT_ID=RC.PAT_ID  AND  RC.LINE=1)
+   LEFT OUTER JOIN ZC_PATIENT_RACE RC1 ON (RC.PATIENT_RACE_C=RC1.PATIENT_RACE_C  AND  RC.LINE=1)
+   LEFT OUTER JOIN CLARITY_DEP DEP ON (DEP.DEPARTMENT_ID=PE.DEPARTMENT_ID)
+   LEFT OUTER JOIN ZC_DEP_RPT_GRP_17 DN ON (DEP.RPT_GRP_SEVNTEEN_C=DEP.RPT_GRP_SEVNTEEN_C)
+   LEFT OUTER JOIN CLARITY_PRC PRC ON (PRC.PRC_ID=PE.APPT_PRC_ID)
+   LEFT OUTER JOIN F_SCHED_APPT SA ON (SA.PAT_ENC_CSN_ID=PE.PAT_ENC_CSN_ID)
+   LEFT OUTER JOIN ZC_EMPY_STATUS ES ON (ES.EMPY_STATUS_C=PAT.EMPY_STATUS_C)
+   LEFT OUTER JOIN ZC_MARITAL_STATUS MS ON (MS.MARITAL_STATUS_C=PAT.MARITAL_STATUS_C)
+   LEFT OUTER JOIN PAT_ENC_4 ON (PAT_ENC_4.PAT_ENC_CSN_ID=PE.PAT_ENC_CSN_ID)
+
+   --No Show History--
+   LEFT JOIN(
+                 SELECT 
+                               NSPE.PAT_ID
+                              ,NSPE.CONTACT_DATE
+                              ,SUM(CASE WHEN NSPE.APPT_STATUS_C='4' 
+                                                       THEN 1
+                                                       ELSE 0
+                                                       END) AS NSH
+                 FROM PAT_ENC NSPE
+                 GROUP BY NSPE.PAT_ID
+                                            ,NSPE.CONTACT_DATE
+                                            )
+                 AS NSHX ON NSHX.PAT_ID=PE.PAT_ID AND NSHX.CONTACT_DATE<PE.CONTACT_DATE
+   
+   --Cancellation History--
+   LEFT JOIN(
+   ) 
+    
+    
+WHERE
+  (
+   PE.CONTACT_DATE  BETWEEN  '1/30/2017 00:0:0'  AND  '12/31/2019 00:0:0'
+   AND DN.NAME  IN  ('Department of Medicine')
+   AND AST.NAME  <>  'NULL' 
+   AND AST.NAME  <>  'Arrived'
+   AND AST.NAME  <>  'Scheduled Appointments'
+  )
+
+
+GROUP BY
+   PE.PAT_ENC_CSN_ID 
+  ,PE.PAT_ID
+  ,PAT.ADD_LINE_1
+  ,PAT.CITY 
+  ,ST.NAME 
+  ,PAT.ZIP 
+  ,DEP.DEPARTMENT_NAME 
+  ,DEP.DEPARTMENT_ID 
+  ,DEP.GL_PREFIX 
+  ,SX.NAME 
+  ,RC1.NAME 
+  ,LAN.NAME 
+  ,CASE WHEN ES.NAME= 'NULL' 
+                           THEN 'UNKNOWN' ELSE ES.NAME 
+                           END 
+  ,MS.NAME 
+  ,CASE WHEN MONTH(PE.CONTACT_DATE) * 100 + DAY(PE.CONTACT_DATE) >= MONTH(PAT.BIRTH_DATE) * 100 + DAY(PAT.BIRTH_DATE) 
+                           THEN DATEDIFF(YEAR, PAT.BIRTH_DATE, PE.CONTACT_DATE) 
+                           ELSE DATEDIFF(YEAR, PAT.BIRTH_DATE, PE.CONTACT_DATE) - 1 
+                           END 
+  ,CASE WHEN EPM.PAYOR_NAME is NULL 
+                           THEN 'SELF-PAY' 
+                           ELSE EPM.PAYOR_NAME 
+                           END 
+  ,SA.APPT_MADE_DTTM 
+  ,PE.APPT_MADE_DATE 
+  ,PE.APPT_TIME 
+  ,DATENAME(DW,PE.APPT_TIME) 
+  ,DATENAME(MM,PE.APPT_TIME) 
+  ,DATEPART(DW,PE.APPT_TIME) 
+  ,DATEPART(HH,PE.APPT_TIME) 
+  ,CASE WHEN DATEPART(HH,PE.APPT_TIME) BETWEEN '01' AND '11' 
+                           THEN 'AM' ELSE 'PM' 
+                           END 
+  ,PE.CONTACT_DATE 
+  ,CASE WHEN DATEDIFF("D",PE.APPT_MADE_DATE, PE.CONTACT_DATE)<0 
+                           THEN 0 ELSE DATEDIFF("D",PE.APPT_MADE_DATE, PE.CONTACT_DATE) 
+                           END 
+  ,PRC.PRC_NAME 
+  ,AST.NAME 
+  ,CASE WHEN AST.NAME='No Show' 
+                           THEN 1 ELSE 0 
+                           END 
+ 
+ORDER BY 
+              PE.PAT_ENC_CSN_ID,
+              PE.CONTACT_DATE ASC
+"""
